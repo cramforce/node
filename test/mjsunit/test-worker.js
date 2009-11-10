@@ -6,14 +6,14 @@ var Worker = require("worker").Worker;
 var worker = new Worker(__filename.replace("test-", "fixtures/"));
 
 worker.onmessage = function (msg) {
-  if(msg.input) {
+  if (msg.input) {
     assertEquals(msg.output, msg.input * 3);
     sys.error("Good");
   }
 }
 
 worker.addListener("message", function (msg) {
-  if(msg == "terminate") {
+  if (msg == "terminate") {
     worker.terminate();
   }
 })
