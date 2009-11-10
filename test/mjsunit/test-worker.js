@@ -3,6 +3,8 @@ process.mixin(require("./common"));
 var sys = require("sys");
 var Worker = require("worker").Worker;
 
+process.ENV["NODE_PATH"] = process.libDir;
+
 var worker = new Worker(__filename.replace("test-", "fixtures/"));
 
 worker.onmessage = function (msg) {
