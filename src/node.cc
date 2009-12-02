@@ -16,6 +16,7 @@
 #include <node_file.h>
 #include <node_http.h>
 #include <node_signal_handler.h>
+#include <node_stat.h>
 #include <node_timer.h>
 #include <node_child_process.h>
 #include <node_constants.h>
@@ -159,6 +160,71 @@ ssize_t DecodeWrite(char *buf, size_t buflen,
   return buflen;
 }
 
+#define DEV_SYMBOL         String::NewSymbol("dev")
+#define INO_SYMBOL         String::NewSymbol("ino")
+#define MODE_SYMBOL        String::NewSymbol("mode")
+#define NLINK_SYMBOL       String::NewSymbol("nlink")
+#define UID_SYMBOL         String::NewSymbol("uid")
+#define GID_SYMBOL         String::NewSymbol("gid")
+#define RDEV_SYMBOL        String::NewSymbol("rdev")
+#define SIZE_SYMBOL        String::NewSymbol("size")
+#define BLKSIZE_SYMBOL     String::NewSymbol("blksize")
+#define BLOCKS_SYMBOL      String::NewSymbol("blocks")
+#define ATIME_SYMBOL       String::NewSymbol("atime")
+#define MTIME_SYMBOL       String::NewSymbol("mtime")
+#define CTIME_SYMBOL       String::NewSymbol("ctime")
+
+static Persistent<FunctionTemplate> stats_constructor_template;
+
+Local<Object> BuildStatsObject(struct stat * s) {
+  HandleScope scope;
+
+  Local<Object> stats =
+    stats_constructor_template->GetFunction()->NewInstance();
+
+  /* ID of device containing file */
+  stats->Set(DEV_SYMBOL, Integer::New(s->st_dev));
+
+  /* inode number */
+  stats->Set(INO_SYMBOL, Integer::New(s->st_ino));
+
+  /* protection */
+  stats->Set(MODE_SYMBOL, Integer::New(s->st_mode));
+
+  /* number of hard links */
+  stats->Set(NLINK_SYMBOL, Integer::New(s->st_nlink));
+
+  /* user ID of owner */
+  stats->Set(UID_SYMBOL, Integer::New(s->st_uid));
+
+  /* group ID of owner */
+  stats->Set(GID_SYMBOL, Integer::New(s->st_gid));
+
+  /* device ID (if special file) */
+  stats->Set(RDEV_SYMBOL, Integer::New(s->st_rdev));
+
+  /* total size, in bytes */
+  stats->Set(SIZE_SYMBOL, Integer::New(s->st_size));
+
+  /* blocksize for filesystem I/O */
+  stats->Set(BLKSIZE_SYMBOL, Integer::New(s->st_blksize));
+
+  /* number of blocks allocated */
+  stats->Set(BLOCKS_SYMBOL, Integer::New(s->st_blocks));
+
+  /* time of last access */
+  stats->Set(ATIME_SYMBOL, NODE_UNIXTIME_V8(s->st_atime));
+
+  /* time of last modification */
+  stats->Set(MTIME_SYMBOL, NODE_UNIXTIME_V8(s->st_mtime));
+
+  /* time of last status change */
+  stats->Set(CTIME_SYMBOL, NODE_UNIXTIME_V8(s->st_ctime));
+
+  return scope.Close(stats);
+}
+
+
 // Extracts a C str from a V8 Utf8Value.
 const char* ToCString(const v8::String::Utf8Value& value) {
   return *value ? *value : "<str conversion failed>";
@@ -243,6 +309,25 @@ static Handle<Value> ByteLength(const Arguments& args) {
   return scope.Close(length);
 }
 
+static Handle<Value> Loop(const Arguments& args) {
+  HandleScope scope;
+  ev_loop(EV_DEFAULT_UC_ 0);
+  return Undefined();
+}
+
+static Handle<Value> Unloop(const Arguments& args) {
+  HandleScope scope;
+  int how = EVUNLOOP_ONE;
+  if (args[0]->IsString()) {
+    String::Utf8Value how_s(args[0]->ToString());
+    if (0 == strcmp(*how_s, "all")) {
+      how = EVUNLOOP_ALL;
+    }
+  }
+  ev_unloop(EV_DEFAULT_ how);
+  return Undefined();
+}
+
 static Handle<Value> Chdir(const Arguments& args) {
   HandleScope scope;
   
@@ -272,6 +357,19 @@ static Handle<Value> Cwd(const Arguments& args) {
   Local<String> cwd = String::New(output);
 
   return scope.Close(cwd);
+}
+
+static Handle<Value> Umask(const Arguments& args){
+  HandleScope scope;
+
+  if(args.Length() < 1 || !args[0]->IsInt32()) {		
+    return ThrowException(Exception::TypeError(
+          String::New("argument must be an integer.")));
+  }
+  unsigned int mask = args[0]->Uint32Value();
+  unsigned int old = umask((mode_t)mask);
+  
+  return scope.Close(Uint32::New(old));
 }
 
 v8::Handle<v8::Value> Exit(const v8::Arguments& args) {
@@ -415,6 +513,14 @@ v8::Handle<v8::Value> MemoryUsage(const v8::Arguments& args) {
   info->Set(String::NewSymbol("rss"), Integer::NewFromUnsigned(rss));
   info->Set(String::NewSymbol("vsize"), Integer::NewFromUnsigned(vsize));
 
+  // V8 memory usage
+  HeapStatistics v8_heap_stats;
+  V8::GetHeapStatistics(&v8_heap_stats);
+  info->Set(String::NewSymbol("heapTotal"),
+            Integer::NewFromUnsigned(v8_heap_stats.total_heap_size()));
+  info->Set(String::NewSymbol("heapUsed"),
+            Integer::NewFromUnsigned(v8_heap_stats.used_heap_size()));
+
   return scope.Close(info);
 #endif
 }
@@ -524,9 +630,51 @@ static void OnFatalError(const char* location, const char* message) {
   exit(1);
 }
 
+static int uncaught_exception_counter = 0;
+
 void FatalException(TryCatch &try_catch) {
-  ReportException(&try_catch);
-  exit(1);
+  HandleScope scope;
+
+  // Check if uncaught_exception_counter indicates a recursion
+  if (uncaught_exception_counter > 0) {
+    ReportException(&try_catch);
+    exit(1);
+  }
+
+  Local<Value> listeners_v = process->Get(String::NewSymbol("listeners"));
+  assert(listeners_v->IsFunction());
+
+  Local<Function> listeners = Local<Function>::Cast(listeners_v);
+
+  Local<String> uncaught_exception = String::NewSymbol("uncaughtException");
+
+  Local<Value> argv[1] = { uncaught_exception };
+  Local<Value> ret = listeners->Call(process, 1, argv);
+
+  assert(ret->IsArray());
+
+  Local<Array> listener_array = Local<Array>::Cast(ret);
+
+  uint32_t length = listener_array->Length();
+  // Report and exit if process has no "uncaughtException" listener
+  if (length == 0) {
+    ReportException(&try_catch);
+    exit(1);
+  }
+
+  // Otherwise fire the process "uncaughtException" event
+  Local<Value> emit_v = process->Get(String::NewSymbol("emit"));
+  assert(emit_v->IsFunction());
+
+  Local<Function> emit = Local<Function>::Cast(emit_v);
+
+  Local<Value> error = try_catch.Exception();
+  Local<Value> event_argv[2] = { uncaught_exception, error };
+
+  uncaught_exception_counter++;
+  emit->Call(process, 2, event_argv);
+  // Decrement so we know if the next exception is a recursion or not
+  uncaught_exception_counter--;
 }
 
 static ev_async eio_watcher;
@@ -635,11 +783,14 @@ static Local<Object> Load(int argc, char *argv[]) {
   process->Set(String::NewSymbol("pid"), Integer::New(getpid()));
 
   // define various internal methods
+  NODE_SET_METHOD(process, "loop", Loop);
+  NODE_SET_METHOD(process, "unloop", Unloop);
   NODE_SET_METHOD(process, "compile", Compile);
   NODE_SET_METHOD(process, "_byteLength", ByteLength);
   NODE_SET_METHOD(process, "reallyExit", Exit);
   NODE_SET_METHOD(process, "chdir", Chdir);
   NODE_SET_METHOD(process, "cwd", Cwd);
+  NODE_SET_METHOD(process, "umask", Umask);
   NODE_SET_METHOD(process, "dlopen", DLOpen);
   NODE_SET_METHOD(process, "kill", Kill);
   NODE_SET_METHOD(process, "memoryUsage", MemoryUsage);
@@ -648,11 +799,19 @@ static Local<Object> Load(int argc, char *argv[]) {
   process->Set(String::NewSymbol("EventEmitter"),
                EventEmitter::constructor_template->GetFunction());
 
+  // Initialize the stats object
+  Local<FunctionTemplate> stat_templ = FunctionTemplate::New();
+  stats_constructor_template = Persistent<FunctionTemplate>::New(stat_templ);
+  process->Set(String::NewSymbol("Stats"),
+      stats_constructor_template->GetFunction());
+
+
   // Initialize the C++ modules..................filename of module
   Promise::Initialize(process);                // events.cc
   Stdio::Initialize(process);                  // stdio.cc
   Timer::Initialize(process);                  // timer.cc
   SignalHandler::Initialize(process);          // signal_handler.cc
+  Stat::Initialize(process);                   // stat.cc
   ChildProcess::Initialize(process);           // child_process.cc
   DefineConstants(process);                    // constants.cc
   // Create node.dns
@@ -680,30 +839,6 @@ static Local<Object> Load(int argc, char *argv[]) {
   // In node.js we actually load the file specified in ARGV[1]
   // so your next reading stop should be node.js!
   ExecuteNativeJS("node.js", native_node);
-}
-
-static void EmitExitEvent() {
-  HandleScope scope;
-
-  // Get the 'emit' function from 'process'
-  Local<Value> emit_v = process->Get(String::NewSymbol("emit"));
-  if (!emit_v->IsFunction()) {
-    // could not emit exit event so exit
-    exit(10);
-  }
-  // Cast
-  Local<Function> emit = Local<Function>::Cast(emit_v);
-
-  TryCatch try_catch;
-
-  // Arguments for the emit('exit')
-  Local<Value> argv[2] = { String::New("exit"), Integer::New(0) };
-  // Emit!
-  emit->Call(process, 2, argv);
-
-  if (try_catch.HasCaught()) {
-    node::FatalException(try_catch);
-  }
 }
 
 static void PrintHelp() {
@@ -829,18 +964,7 @@ int main(int argc, char *argv[]) {
   // so your next reading stop should be node::Load()!
   node::Load(argc, argv);
 
-  // All our arguments are loaded. We've evaluated all of the scripts. We
-  // might even have created TCP servers. Now we enter the main event loop.
-  // If there are no watchers on the loop (except for the ones that were
-  // ev_unref'd) then this function exits. As long as there are active
-  // watchers, it blocks.
-  ev_loop(EV_DEFAULT_UC_ 0);  // main event loop
-
-  // Once we've dropped out, emit the 'exit' event from 'process'
-  node::EmitExitEvent();
-
 #ifndef NDEBUG
-  printf("clean up\n");
   // Clean up.
   context.Dispose();
   V8::Dispose();

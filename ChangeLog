@@ -1,4 +1,66 @@
-2009.11.07, Version 0.1.17
+2009.11.28, Version 0.1.20
+
+  * Add gnutls version to configure script
+
+  * Add V8 heap info to process.memoryUsage()
+
+  * process.watchFile callback has 2 arguments with the stat object
+    (choonkeat@gmail.com)
+
+
+2009.11.28, Version 0.1.19, 633d6be328708055897b72327b88ac88e158935f
+
+  * Feature: Initial TLS support for TCP servers and clients.
+    (Rhys Jones)
+
+  * Add options to process.watchFile()
+
+  * Add process.umask() (Friedemann Altrock)
+
+  * Bugfix: only detach timers when active.
+
+  * Bugfix: lib/file.js write(), shouldn't always emit errors or success
+    (onne@onnlucky.com)
+
+  * Bugfix: Memory leak in fs.write
+    (Reported by onne@onnlucky.com)
+
+  * Bugfix: Fix regular expressions detecting outgoing message headers.
+    (Reported by Elliott Cable)
+
+  * Improvements to Multipart parser (Felix Geisendörfer)
+
+  * New HTTP parser
+
+  * Upgrade v8 to 2.0.2
+
+
+2009.11.17, Version 0.1.18, 027829d2853a14490e6de9fc5f7094652d045ab8
+
+  * Feature: process.watchFile() process.unwatchFile()
+
+  * Feature: "uncaughtException" event on process
+    (Felix Geisendörfer)
+
+  * Feature: 'drain' event to tcp.Connection
+
+  * Bugfix: Promise.timeout() blocked the event loop
+    (Felix Geisendörfer)
+
+  * Bugfix: sendBody() and chunked utf8 strings
+    (Felix Geisendörfer)
+
+  * Supply the strerror as a second arg to the tcp.Connection close
+    event (Johan Sørensen)
+
+  * Add EventEmitter.removeListener (frodenius@gmail.com)
+
+  * Format JSON for inspecting objects (Felix Geisendörfer)
+
+  * Upgrade libev to latest CVS
+
+
+2009.11.07, Version 0.1.17, d1f69ef35dac810530df8249d523add168e09f03
 
   * Feature: process.chdir() (Brandon Beacher)
 
@@ -22,9 +84,9 @@
     - Move node.fs into module "posix"
     - process is no longer the global object. GLOBAL is.
 
-	For more information on the API changes see: 
-		http://thread.gmane.org/gmane.comp.lang.javascript.nodejs/6
-		http://thread.gmane.org/gmane.comp.lang.javascript.nodejs/14
+  For more information on the API changes see: 
+    http://thread.gmane.org/gmane.comp.lang.javascript.nodejs/6
+    http://thread.gmane.org/gmane.comp.lang.javascript.nodejs/14
 
   * Feature: process.platform, process.memoryUsage()
 

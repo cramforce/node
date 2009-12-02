@@ -201,6 +201,17 @@ process.EventEmitter.prototype.addListener = function (type, listener) {
   return this;
 };
 
+process.EventEmitter.prototype.removeListener = function (type, listener) {
+  if (listener instanceof Function) {
+    // does not use listeners(), so no side effect of creating _events[type]
+    if (!this._events || !this._events.hasOwnProperty(type)) return;
+    var list = this._events[type];
+    if (list.indexOf(listener) < 0) return;
+    list.splice(list.indexOf(listener), 1);
+  }
+  return this;
+};
+
 process.EventEmitter.prototype.listeners = function (type) {
   if (!this._events) this._events = {};
   if (!this._events.hasOwnProperty(type)) this._events[type] = [];
@@ -215,11 +226,16 @@ process.Promise.prototype.timeout = function(timeout) {
   this._timeoutDuration = timeout;
   if (this._timer) {
     clearTimeout(this._timer);
+    this._timer = null;
   }
 
   var promiseComplete = false;
   var onComplete = function() {
     promiseComplete = true;
+    if (this._timer) {
+      clearTimeout(this._timer);
+      this._timer = null;
+    }
   };
 
   this
@@ -227,8 +243,9 @@ process.Promise.prototype.timeout = function(timeout) {
     .addCancelback(onComplete)
     .addErrback(onComplete);
 
-  var self = this
+  var self = this;
   this._timer = setTimeout(function() {
+    self._timer = null;
     if (promiseComplete) {
       return;
     }
@@ -240,6 +257,9 @@ process.Promise.prototype.timeout = function(timeout) {
 };
 
 process.Promise.prototype.cancel = function() {
+  if(this._cancelled) return;
+  this._cancelled = true;
+
   this._events['success'] = [];
   this._events['error'] = [];
 
@@ -313,6 +333,46 @@ process.addListener("newListener", function (event) {
     });
   }
 });
+
+
+// Stat Change Watchers
+
+var statWatchers = {};
+
+process.watchFile = function (filename) {
+  var stat;
+  var options;
+  var listener;
+
+  if ("object" == typeof arguments[1]) {
+    options = arguments[1];
+    listener = arguments[2];
+  } else {
+    options = {};
+    listener = arguments[1];
+  }
+    
+  if (options.persistent === undefined) options.persistent = true;
+  if (options.interval === undefined) options.interval = 0;
+
+  if (filename in statWatchers) {
+    stat = statWatchers[filename];
+  } else {
+    statWatchers[filename] = new process.Stat();
+    stat = statWatchers[filename];
+    stat.start(filename, options.persistent, options.interval);
+  }
+  stat.addListener("change", listener);
+  return stat;
+};
+
+process.unwatchFile = function (filename) {
+  if (filename in statWatchers) {
+    stat = statWatchers[filename];
+    stat.stop();
+    statWatchers[filename] = undefined;
+  }
+};
 
 
 
@@ -660,6 +720,14 @@ if (process.ARGV[1].charAt(0) != "/" && !/^http:\/\//.exec(process.ARGV[1])) {
 process.mainModule = createModule(".");
 var loadPromise = new process.Promise();
 process.mainModule.load(process.ARGV[1], loadPromise);
-loadPromise.wait();
+
+// All our arguments are loaded. We've evaluated all of the scripts. We
+// might even have created TCP servers. Now we enter the main eventloop. If
+// there are no watchers on the loop (except for the ones that were
+// ev_unref'd) then this function exits. As long as there are active
+// watchers, it blocks.
+process.loop();
+
+process.emit("exit");
 
 }()); // end annonymous namespace
