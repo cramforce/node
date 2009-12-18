@@ -83,7 +83,7 @@ def copytree(src, dst, symlinks=False, ignore=None):
 def conf_subproject (conf, subdir, command=None):
   print("---- %s ----" % subdir)
   src = join(conf.srcdir, subdir)
-  if not os.path.exists (src): fatal("no such subproject " + subdir)
+  if not os.path.exists (src): conf.fatal("no such subproject " + subdir)
 
   default_tgt = join(conf.blddir, "default", subdir)
 
@@ -92,7 +92,7 @@ def conf_subproject (conf, subdir, command=None):
 
   if command:
     if os.system("cd %s && %s" % (default_tgt, command)) != 0:
-      fatal("Configuring %s failed." % (subdir))
+      conf.fatal("Configuring %s failed." % (subdir))
 
   debug_tgt = join(conf.blddir, "debug", subdir)
 
@@ -116,8 +116,10 @@ def configure(conf):
   #  conf.check(lib='efence', libpath=['/usr/lib', '/usr/local/lib'], uselib_store='EFENCE')
 
   if not conf.check(lib="execinfo", libpath=['/usr/lib', '/usr/local/lib'], uselib_store="EXECINFO"):
+    # Note on Darwin/OS X: This will fail, but will still be used as the
+    # execinfo stuff are part of the standard library.
     if sys.platform.startswith("freebsd"):
-      fatal("Install the libexecinfo port from /usr/ports/devel/libexecinfo.")
+      conf.fatal("Install the libexecinfo port from /usr/ports/devel/libexecinfo.")
 
   if conf.check_cfg(package='gnutls',
                     args='--cflags --libs',
