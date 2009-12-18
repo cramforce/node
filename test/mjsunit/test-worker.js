@@ -33,7 +33,7 @@ worker.postMessage({
 
 setTimeout(function () {
   worker.terminate();
-}, 2000);
+}, 20);
 
 setTimeout(function () {
   setTimeout(function () {
@@ -53,9 +53,9 @@ setTimeout(function () {
     worker.postMessage({
       input: 8
     });
-  }, 1000);
+  }, 10);
   worker.terminate()
-}, 1000);
+}, 10);
 
 var fibWorker = makeWorker();
 fibWorker.postMessage({
